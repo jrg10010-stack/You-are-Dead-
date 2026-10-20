@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-black">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>You are dead .pdf</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- PDF.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+
+    <style>
+        body {
+            background-color: #000000;
+            color: #ffffff;
+            margin: 0;
+            overflow-x: hidden;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        /* Smooth page transition */
+        .page-render {
+            transition: opacity 0.2s ease-in-out;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8);
+        }
+
+        /* Hide scrollbars for ultra-clean view */
+        ::-webkit-scrollbar {
+            width: 0px;
+            background: transparent;
+        }
+    </style>
+</head>
+
+<body class="h-full w-full bg-black text-white relative font-mono antialiased cursor-pointer">
+
+    <!-- DIGITAL NOISE OVERLAY CANVAS (SUBTLE FILM GRAIN) -->
+    <canvas id="noiseCanvas" class="fixed inset-0 w-full h-full pointer-events-none z-50"></canvas>
+
+    <!-- MAIN INTERACTIVE CONTAINER -->
+    <main id="app" class="min-h-screen w-full flex flex-col items-center justify-center relative z-10 p-4">
+
+        <!-- STEP VIEW (Landing & Page-by-Page) -->
+        <div id="stepView" class="flex flex-col items-center justify-center min-h-screen w-full my-auto py-6">
+            
+            <!-- Pages Container -->
+            <div id="pagesContainer" class="flex items-center justify-center max-w-full gap-1">
+                <!-- Canvases inserted dynamically -->
+                <div id="loadingText" class="text-xs text-neutral-600 tracking-widest lowercase animate-pulse">loading...</div>
+            </div>
+
+            <!-- Landing Page Prompt (Hidden until loaded) -->
+            <div id="startText" class="mt-6 text-xs text-neutral-500 tracking-widest lowercase animate-pulse select-none hidden">
+                click to start
+            </div>
+
+        </div>
+
+        <!-- FULL PDF SCROLL VIEW (Top-to-Bottom Stacked View) -->
+        <div id="fullScrollView" class="hidden flex-col items-center gap-6 py-12 w-full max-w-5xl mx-auto min-h-screen">
+            <div id="scrollList" class="flex flex-col items-center gap-8 w-full">
+                <!-- Stacked pages inserted dynamically -->
+            </div>
+            <div class="mt-8 text-xs text-neutral-600 tracking-widest lowercase animate-pulse py-6">
+                click to restart
+            </div>
+        </div>
+
+    </main>
+
+    <!-- APPLICATION LOGIC -->
+    <script>
+        /* ==========================================================================
+           CONFIG
+           ========================================================================== */
+        // Path to your exported zine PDF
+        const PDF_FILE = 'You are dead .pdf';
+
+        // NOISE SETTINGS — Tweak these values anytime to adjust grain intensity & feel!
+        const NOISE_OPACITY = 40;  // Overall noise visibility (e.g. 0.01 = ultra subtle, 0.05 = noticeable)
+        const NOISE_GRAIN = 40;        // Alpha intensity of individual grain particles
+        const NOISE_SPEED = 70;       // Animation speed in milliseconds per frame (lower = faster flicker)
+
+        // Configure PDF.js Worker
+        if (window.pdfjsLib) {
+            pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        }
+
+        /* ==========================================================================
+           1. REALTIME ULTRA-SUBTLE DIGITAL NOISE CANVAS
+           ========================================================================== */
+        const noiseCanvas = document.getElementById('noiseCanvas');
+        const noiseCtx = noiseCanvas.getContext('2d');
+        let noiseFrames = [];
+        let noiseIdx = 0;
+
+        // Apply noise opacity setting
+        noiseCanvas.style.opacity = NOISE_OPACITY;
+
+        function resizeNoise() {
+            noiseCanvas.width = Math.floor(window.innerWidth / 2);
+            noiseCanvas.height = Math.floor(window.innerHeight / 2);
+            noiseFrames = [];
+            const w = noiseCanvas.width;
+            const h = noiseCanvas.height;
+            if (w === 0 || h === 0) return;
+
+            // Generate noise frames using config variables
+            for (let f = 0; f < 4; f++) {
+                const imgData = noiseCtx.createImageData(w, h);
+                const buffer = new Uint32Array(imgData.data.buffer);
+                const len = buffer.length;
+
+                for (let i = 0; i < len; i++) {
+                    const alpha = Math.floor(Math.random() * NOISE_GRAIN) + 3;
+                    const gray = Math.floor(Math.random() * 180) + 75;
+                    buffer[i] = (alpha << 24) | (gray << 16) | (gray << 8) | gray;
+                }
+                noiseFrames.push(imgData);
+            }
+        }
+
+        function loopNoise() {
+            if (noiseFrames.length > 0) {
+                noiseCtx.putImageData(noiseFrames[noiseIdx], 0, 0);
+                noiseIdx = (noiseIdx + 1) % noiseFrames.length;
+            }
+            setTimeout(() => requestAnimationFrame(loopNoise), NOISE_SPEED);
+        }
+
+        window.addEventListener('resize', resizeNoise);
+        resizeNoise();
+        loopNoise();
+
+
+        /* ==========================================================================
+           2. STATE & STEPS GENERATOR
+           ========================================================================== */
+        const state = {
+            renderedCanvases: [], // Array of high-res HTMLCanvasElements
+            steps: [],            // Calculated sequence steps: [[1], [2], [3], ..., 'FULL_SCROLL']
+            currentStepIdx: 0,
+            isLoaded: false
+        };
+
+        /* Build step sequence logic (pages 6 & 7 as a spread, rest single pages) */
+        function buildSteps(totalPages) {
+            const steps = [];
+            let p = 1;
+
+            while (p <= totalPages) {
+                if (p === 6 && p + 1 <= totalPages) {
+                    // Combine pages 6 and 7 into a single spread step
+                    steps.push([6, 7]);
+                    p += 2;
+                } else {
+                    steps.push([p]);
+                    p += 1;
+                }
+            }
+
+            // Final Step: Continuous Vertical Scroll Mode
+            steps.push('FULL_SCROLL');
+            return steps;
+        }
+
+        /* Clone helper to duplicate rendered page canvases into scroll view */
+        function cloneCanvas(oldCanvas) {
+            const newCanvas = document.createElement('canvas');
+            const ctx = newCanvas.getContext('2d');
+            newCanvas.width = oldCanvas.width;
+            newCanvas.height = oldCanvas.height;
+            ctx.drawImage(oldCanvas, 0, 0);
+            return newCanvas;
+        }
+
+        /* ==========================================================================
+           3. PDF & FALLBACK RENDERING
+           ========================================================================== */
+        async function loadPDF() {
+            try {
+                const loadingTask = pdfjsLib.getDocument(PDF_FILE);
+                const pdf = await loadingTask.promise;
+                await renderPdfPages(pdf);
+            } catch (err) {
+                console.warn(`Could not load '${PDF_FILE}'. Displaying placeholder zine view...`);
+                generateFallbackPages();
+            }
+        }
+
+        async function renderPdfPages(pdfDoc) {
+            state.renderedCanvases = [];
+            const numPages = pdfDoc.numPages;
+
+            for (let i = 1; i <= numPages; i++) {
+                const page = await pdfDoc.getPage(i);
+                const pixelRatio = window.devicePixelRatio || 1;
+                const viewport = page.getViewport({ scale: 2.0 * Math.max(1, pixelRatio) });
+
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                canvas.height = viewport.height;
+                canvas.width = viewport.width;
+
+                await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+                state.renderedCanvases.push(canvas);
+            }
+
+            initZine();
+        }
+
+        /* Generates clean procedural placeholder pages if no PDF file exists yet */
+        function generateFallbackPages() {
+            state.renderedCanvases = [];
+            const total = 8;
+            const w = 800, h = 1130;
+
+            for (let i = 1; i <= total; i++) {
+                const cvs = document.createElement('canvas');
+                cvs.width = w;
+                cvs.height = h;
+                const ctx = cvs.getContext('2d');
+
+                // Pitch black background
+                ctx.fillStyle = '#000000';
+                ctx.fillRect(0, 0, w, h);
+
+                // Minimal line box
+                ctx.strokeStyle = '#1a1a1a';
+                ctx.lineWidth = 1;
+                ctx.strokeRect(30, 30, w - 60, h - 60);
+
+                // Clean typography
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 32px monospace';
+
+                if (i === 1) {
+                    ctx.fillText('YOU ARE DEAD', 60, 160);
+                    ctx.font = '14px monospace';
+                    ctx.fillStyle = '#666666';
+                    ctx.fillText('PAGE 01', 60, 200);
+                } else {
+                    ctx.fillText(`PAGE 0${i}`, 60, 160);
+                    ctx.font = '14px monospace';
+                    ctx.fillStyle = '#666666';
+                    ctx.fillText('YOU ARE DEAD .PDF', 60, 200);
+                }
+                state.renderedCanvases.push(cvs);
+            }
+            initZine();
+        }
+
+        /* ==========================================================================
+           4. STEP CONTROLLER & DISPLAY
+           ========================================================================== */
+        function initZine() {
+            state.steps = buildSteps(state.renderedCanvases.length);
+            state.currentStepIdx = 0;
+            state.isLoaded = true;
+
+            const elLoading = document.getElementById('loadingText');
+            if (elLoading) elLoading.classList.add('hidden');
+
+            renderCurrentStep();
+        }
+
+        function renderCurrentStep() {
+            const elStepView = document.getElementById('stepView');
+            const elFullScrollView = document.getElementById('fullScrollView');
+            const elPagesContainer = document.getElementById('pagesContainer');
+            const elStartText = document.getElementById('startText');
+            const elScrollList = document.getElementById('scrollList');
+
+            const currentStep = state.steps[state.currentStepIdx];
+
+            if (currentStep === 'FULL_SCROLL') {
+                // SHOW CONTINUOUS VERTICAL SCROLL
+                elStepView.classList.add('hidden');
+                elFullScrollView.classList.remove('hidden');
+                elFullScrollView.classList.add('flex');
+
+                elScrollList.innerHTML = '';
+                state.renderedCanvases.forEach((cvs) => {
+                    const clone = cloneCanvas(cvs);
+                    clone.className = 'w-full max-w-3xl h-auto object-contain border border-neutral-900 rounded-sm shadow-2xl';
+                    elScrollList.appendChild(clone);
+                });
+
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+            } else {
+                // SHOW SINGLE PAGE / SPREAD STEP VIEW
+                elFullScrollView.classList.add('hidden');
+                elFullScrollView.classList.remove('flex');
+                elStepView.classList.remove('hidden');
+
+                elPagesContainer.innerHTML = '';
+
+                // Landing Step vs Page Step (Only display click to start when loaded on first page)
+                if (state.currentStepIdx === 0 && state.isLoaded) {
+                    elStartText.classList.remove('hidden');
+                } else {
+                    elStartText.classList.add('hidden');
+                }
+
+                // Render pages in current step (supports 1-page step or 2-page spread)
+                const isSpread = currentStep.length > 1;
+                currentStep.forEach((pgNum) => {
+                    const cvs = state.renderedCanvases[pgNum - 1];
+                    if (cvs) {
+                        const clone = cloneCanvas(cvs);
+                        clone.className = isSpread
+                            ? 'max-h-[82vh] max-w-[46vw] w-auto h-auto object-contain page-render border border-neutral-900 rounded-sm'
+                            : 'max-h-[82vh] w-auto h-auto object-contain page-render border border-neutral-900 rounded-sm';
+                        elPagesContainer.appendChild(clone);
+                    }
+                });
+            }
+        }
+
+        function advanceStep() {
+            if (!state.isLoaded) return;
+
+            if (state.currentStepIdx < state.steps.length - 1) {
+                state.currentStepIdx += 1;
+            } else {
+                // Restart to beginning
+                state.currentStepIdx = 0;
+            }
+            renderCurrentStep();
+        }
+
+
+        /* ==========================================================================
+           5. INTERACTION EVENT LISTENERS
+           ========================================================================== */
+        // Global Click to Advance or Restart
+        window.addEventListener('click', () => {
+            advanceStep();
+        });
+
+        // Keyboard Controls (Space, Right Arrow, Enter)
+        window.addEventListener('keydown', (e) => {
+            if (e.key === ' ' || e.key === 'ArrowRight' || e.key === 'Enter') {
+                e.preventDefault();
+                advanceStep();
+            } else if (e.key === 'ArrowLeft' && state.currentStepIdx > 0) {
+                e.preventDefault();
+                state.currentStepIdx -= 1;
+                renderCurrentStep();
+            }
+        });
+
+        // Drag & drop support for local testing/previewing
+        window.addEventListener('dragover', (e) => e.preventDefault());
+        window.addEventListener('drop', async (e) => {
+            e.preventDefault();
+            if (e.dataTransfer.files.length > 0 && e.dataTransfer.files[0].type === 'application/pdf') {
+                const file = e.dataTransfer.files[0];
+                const arrayBuffer = await file.arrayBuffer();
+                const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+                await renderPdfPages(pdf);
+            }
+        });
+
+        // Initialize on DOM load
+        window.addEventListener('DOMContentLoaded', () => {
+            loadPDF();
+        });
+    </script>
+</body>
+</html>
